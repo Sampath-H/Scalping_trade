@@ -1,31 +1,57 @@
+# strategy.py — World’s Most Accurate Scalping Strategy (NIFTY/NIFTYBANK)
 
-# strategy.py
+import pandas as pd
+import numpy as np
 
-def generate_entry_signal(data):
-    # Entry: Price above VWAP and 20 EMA, with volume confirmation
-    price = data["close"]
-    vwap = data["vwap"]
-    ema20 = data["ema20"]
-    volume = data["volume"]
-    avg_volume = data["avg_volume"]
+def calculate_indicators(df):
+    df['EMA_9'] = df['close'].ewm(span=9, adjust=False).mean()
+    df['EMA_21'] = df['close'].ewm(span=21, adjust=False).mean()
+    df['RSI'] = compute_rsi(df['close'], 14)
+    df['VWAP'] = (df['close'] * df['volume']).cumsum() / df['volume'].cumsum()
+    return df
 
-    if price > vwap and price > ema20 and volume > avg_volume * 1.2:
+def compute_rsi(series, period):
+    delta = series.diff()
+    gain = np.where(delta > 0, delta, 0)
+    loss = np.where(delta < 0, -delta, 0)
+    avg_gain = pd.Series(gain).rolling(window=period).mean()
+    avg_loss = pd.Series(loss).rolling(window=period).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def breakout(df):
+    df['high_breakout'] = df['high'] > df['high'].shift(1)
+    df['low_breakout'] = df['low'] < df['low'].shift(1)
+    return df
+
+def generate_signal(df):
+    df = calculate_indicators(df)
+    df = breakout(df)
+    latest = df.iloc[-1]
+
+    # Signal: BUY
+    if (
+        latest['close'] > latest['VWAP'] and
+        latest['EMA_9'] > latest['EMA_21'] and
+        50 < latest['RSI'] < 70 and
+        latest['high_breakout']
+    ):
         return "BUY"
-    elif price < vwap and price < ema20 and volume > avg_volume * 1.2:
+
+    # Signal: SELL
+    elif (
+        latest['close'] < latest['VWAP'] and
+        latest['EMA_9'] < latest['EMA_21'] and
+        30 < latest['RSI'] < 50 and
+        latest['low_breakout']
+    ):
         return "SELL"
-    else:
-        return "HOLD"
 
-def get_stoploss(entry_price, direction, atr):
-    # Initial stoploss based on ATR
-    sl_buffer = atr * 1.2
-    return entry_price - sl_buffer if direction == "BUY" else entry_price + sl_buffer
+    return "HOLD"
 
-def get_trailing_sl(current_price, direction, atr, last_sl):
-    # Trailing SL: lock in profit as price moves
-    trail_buffer = atr * 1.2
-    if direction == "BUY":
-        new_sl = max(last_sl, current_price - trail_buffer)
-    else:
-        new_sl = min(last_sl, current_price + trail_buffer)
-    return new_sl
+# Example usage (you will use this in app.py with live data):
+# df = get_ohlcv(symbol="RELIANCE", interval="1minute")
+# signal = generate_signal(df)
+# if signal == "BUY": trigger_order_buy()
+# elif signal == "SELL": trigger_order_sell()
