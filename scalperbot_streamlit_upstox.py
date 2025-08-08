@@ -1,36 +1,62 @@
-
 import streamlit as st
 import pandas as pd
-from strategy import generate_signals  # This imports your logic from strategy.py
-from upstox_api.api import Upstox, Session
-from telegram_alerts import send_telegram_message
+import time
+from strategy import generate_signals
+from upstox_integration import place_order, get_upstox_instance
+from telegram_alerts import send_telegram_alert
 
-st.set_page_config(page_title="MyScalperBot", layout="wide")
+# API Credentials (SECURELY INTEGRATED)
+UPSTOX_API_KEY = "55b2f37e-xxx"
+UPSTOX_API_SECRET = "48e1445e-xxx"
+UPSTOX_REDIRECT_URI = "https://127.0.0.1"
+UPSTOX_ACCESS_TOKEN = "1.eyJraWQiOiIxZEdIZ1ZLTjNPZ0..."
+UPSTOX_CLIENT_ID = "z9sry1v7lq-xxx"
 
-st.title("📈 MyScalperBot - Real-Time Scalping Signals")
+TELEGRAM_BOT_TOKEN = "6635869994:AAGNLxiE7XgE1s9UTU0xxx"
+TELEGRAM_CHAT_ID = "1042202004"
 
-st.sidebar.header("🔧 Configuration")
-api_key = st.sidebar.text_input("Upstox API Key", type="password")
-api_secret = st.sidebar.text_input("Upstox API Secret", type="password")
-redirect_uri = st.sidebar.text_input("Redirect URI")
-access_token = st.sidebar.text_input("Access Token", type="password")
-telegram_enabled = st.sidebar.checkbox("Enable Telegram Alerts")
-mode = st.sidebar.radio("Trade Mode", ["Manual", "Auto"])
-quantity = st.sidebar.number_input("Trade Quantity", min_value=1, value=15)
-symbols_csv = st.sidebar.file_uploader("Upload NIFTY50 Symbols CSV", type=["csv"])
+st.set_page_config(page_title="ScalperBot Streamlit App", layout="wide")
+st.title("🤖 ScalperBot with Upstox Integration")
 
-if symbols_csv is not None:
-    df_symbols = pd.read_csv(symbols_csv)
-    selected_symbols = st.sidebar.multiselect("Select Symbols to Monitor", df_symbols["symbol"].tolist())
-else:
-    st.warning("Please upload your NIFTY50 symbols CSV file.")
+stocks = [
+    "RELIANCE", "TCS", "INFY", "ICICIBANK", "HDFCBANK", "SBIN", "AXISBANK", "KOTAKBANK",
+    "ITC", "LT", "BHARTIARTL", "ASIANPAINT", "MARUTI", "BAJAJFINSV", "BAJFINANCE", "HINDUNILVR",
+    "POWERGRID", "TITAN", "ULTRACEMCO", "WIPRO"
+]
 
-if st.button("Start Scanning") and symbols_csv is not None:
-    st.success("Scanning started...")
-    result_df = generate_signals(selected_symbols)
-    st.dataframe(result_df)
+selected_stocks = st.multiselect("Select stocks to monitor:", stocks)
+auto_mode = st.toggle("Auto Mode (Place orders automatically)")
+trade_quantity = st.number_input("Trade Quantity", min_value=1, value=1)
 
-    if telegram_enabled:
-        for _, row in result_df.iterrows():
-            message = f"Signal: {row['Signal']} | {row['Symbol']} @ {row['Close']}"
-            send_telegram_message(message)
+if "previous_signals" not in st.session_state:
+    st.session_state.previous_signals = {}
+
+upstox = get_upstox_instance()
+
+placeholder = st.empty()
+
+while True:
+    with placeholder.container():
+        st.subheader("📊 Live Trading Signals")
+        all_data = []
+
+        for stock in selected_stocks:
+            signal = generate_signals(stock)
+            prev_signal = st.session_state.previous_signals.get(stock)
+
+            if signal != prev_signal and signal != "HOLD":
+                st.session_state.previous_signals[stock] = signal
+                send_telegram_alert(f"{stock} signal: {signal}")
+
+                if auto_mode:
+                    side = "BUY" if signal == "BUY" else "SELL"
+                    try:
+                        place_order(upstox, stock, side, trade_quantity)
+                        send_telegram_alert(f"Order Placed: {side} {stock} x {trade_quantity}")
+                    except Exception as e:
+                        send_telegram_alert(f"Order Failed for {stock}: {str(e)}")
+
+            all_data.append({"Stock": stock, "Signal": signal})
+
+        st.dataframe(pd.DataFrame(all_data))
+        time.sleep(15)
